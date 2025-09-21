@@ -1,6 +1,9 @@
 [workspace]
 members = [
-"contracts/issuer_registry"
+    "contracts/issuer_registry",
+    "contracts/reputation_staking",
+    "contracts/sbt_factory",
+    "contracts/sbt",
 ]
 
 resolver = "2"

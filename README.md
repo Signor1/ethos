@@ -12,7 +12,6 @@
 ethos/
 ├── Cargo.toml                    # Workspace configuration
 ├── README.md                     # This file
-├── LICENSE                       # MIT License
 ├── .gitignore                    # Git ignore rules
 ├── contracts/                    # Smart contracts (Stylus/Rust)
 │   ├── issuer-registry/          # Manages trusted issuers
@@ -45,13 +44,8 @@ ethos/
 │   │   ├── utils/                # Utility functions
 │   │   └── types/                # TypeScript type definitions
 │   └── public/
-├── scripts/                      # Deployment and utility scripts
-│   ├── deploy.js                 # Contract deployment script
-│   └── setup.js                 # Development setup script
 └── docs/                         # Documentation
-    ├── ARCHITECTURE.md           # Detailed architecture docs
-    ├── DEPLOYMENT.md             # Deployment guide
-    └── CONTRIBUTING.md           # Contribution guidelines
+    └── DEPLOYMENT.md          # Deployment guide
 ```
 
 ## 🎯 Vision & Core Features

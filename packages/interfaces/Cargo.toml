@@ -1,6 +1,16 @@
 [package]
 name = "interfaces"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+description = "Shared interfaces and traits for Ethos reputation system contracts"
 
 [dependencies]
+stylus-sdk = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[lib]
+crate-type = ["lib", "cdylib"]

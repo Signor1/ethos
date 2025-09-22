@@ -203,6 +203,17 @@ fmt:
 	@cd frontend && bunx prettier --write . && cd ..
 	@echo "$(GREEN)Code formatted!$(NC)"
 
+# Run clippy
+.PHONY: clippy
+clippy:
+	@echo "$(GREEN)Running clippy...$(NC)"
+	@for contract in $(CONTRACTS); do \
+		echo "$(YELLOW)Clippy $$contract...$(NC)"; \
+		cd $$contract && cargo clippy --target $(WASM_TARGET) --lib -- -W clippy::all && cd ..; \
+	done
+	@cd interfaces && cargo clippy --lib -- -W clippy::all && cd ..
+	@echo "$(GREEN)Clippy checks passed!$(NC)"
+
 
 ####### Individual contract targets #######
 .PHONY: $(addprefix check-,$(CONTRACTS))

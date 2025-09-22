@@ -4,6 +4,7 @@ members = [
     "contracts/reputation_staking",
     "contracts/sbt_factory",
     "contracts/sbt",
+    "packages/interfaces",
 ]
 
-resolver = "2"
+resolver = "3"

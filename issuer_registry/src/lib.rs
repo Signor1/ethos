@@ -1,24 +1,6 @@
 //!
-//! Stylus Hello World
-//!
-//! The following contract implements the Counter example from Foundry.
-//!
-//! ```solidity
-//! contract Counter {
-//!     uint256 public number;
-//!     function setNumber(uint256 newNumber) public {
-//!         number = newNumber;
-//!     }
-//!     function increment() public {
-//!         number++;
-//!     }
-//! }
-//! ```
-//!
-//! The program is ABI-equivalent with Solidity, which means you can call it from both Solidity and Rust.
-//! To do this, run `cargo stylus export-abi`.
-//!
-//! Note: this code is a template-only and has not been audited.
+//! # Issuer Registry Contract
+//! Manages a whitelist of trusted addresses that are allowed to create SBTs.
 //!
 // Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
@@ -28,84 +10,169 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use alloy_primitives::Address;
+use stylus_sdk::{alloy_sol_types::sol, prelude::*};
 
-/// Import items from the SDK. The prelude contains common traits and macros.
-use stylus_sdk::{alloy_primitives::U256, prelude::*};
-
-// Define some persistent storage using the Solidity ABI.
-// `Counter` will be the entrypoint.
 sol_storage! {
     #[entrypoint]
-    pub struct Counter {
-        uint256 number;
+    pub struct IssuerRegistry {
+        address owner;
+        address new_owner;
+        mapping(address => bool) is_registered;
     }
 }
 
-/// Declare that `Counter` is a contract with the following external methods.
+sol! {
+    error Unauthorized();
+    error AccountAlreadyRegistered();
+    error AddressZeroNotAllowed();
+
+    event IssuerRegistered(address indexed issuer);
+    event NewOwnerRegistered(address indexed new_owner);
+    event OwnershipTransferred(address indexed previous_owner, address indexed new_owner);
+}
+
+#[derive(SolidityError)]
+pub enum IssuerRegistryError {
+    Unauthorized(Unauthorized),
+    AccountAlreadyRegistered(AccountAlreadyRegistered),
+    AddressZeroNotAllowed(AddressZeroNotAllowed),
+}
+
 #[public]
-impl Counter {
-    /// Gets the number from storage.
-    pub fn number(&self) -> U256 {
-        self.number.get()
+impl IssuerRegistry {
+    #[constructor]
+    fn constructor(&mut self) -> Result<(), IssuerRegistryError> {
+        let owner: Address = self.vm().tx_origin();
+
+        if owner.is_zero() {
+            return Err(IssuerRegistryError::Unauthorized(Unauthorized {}));
+        }
+
+        self.owner.set(owner);
+
+        log(
+            self.vm(),
+            OwnershipTransferred {
+                previous_owner: Address::ZERO,
+                new_owner: owner,
+            },
+        );
+
+        Ok(())
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn set_number(&mut self, new_number: U256) {
-        self.number.set(new_number);
+    pub fn register_as_issuer(&mut self) -> Result<(), IssuerRegistryError> {
+        let issuer_address = self.vm().msg_sender();
+        if self.is_registered.get(issuer_address) {
+            return Err(IssuerRegistryError::AccountAlreadyRegistered(
+                AccountAlreadyRegistered {},
+            ));
+        }
+        self.is_registered.insert(issuer_address, true);
+
+        log(
+            self.vm(),
+            IssuerRegistered {
+                issuer: issuer_address,
+            },
+        );
+
+        Ok(())
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn mul_number(&mut self, new_number: U256) {
-        self.number.set(new_number * self.number.get());
+    pub fn transfer_ownership(&mut self, new_owner: Address) -> Result<(), IssuerRegistryError> {
+        let current_owner = self.owner.get();
+        if current_owner != self.vm().msg_sender() {
+            return Err(IssuerRegistryError::Unauthorized(Unauthorized {}));
+        }
+
+        if new_owner.is_zero() {
+            return Err(IssuerRegistryError::AddressZeroNotAllowed(
+                AddressZeroNotAllowed {},
+            ));
+        }
+
+        self.new_owner.set(new_owner);
+
+        log(self.vm(), NewOwnerRegistered { new_owner });
+
+        Ok(())
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn add_number(&mut self, new_number: U256) {
-        self.number.set(new_number + self.number.get());
+    pub fn claim_ownership(&mut self) -> Result<(), IssuerRegistryError> {
+        let caller = self.vm().msg_sender();
+        if caller.is_zero() {
+            return Err(IssuerRegistryError::AddressZeroNotAllowed(
+                AddressZeroNotAllowed {},
+            ));
+        }
+
+        let new_owner = self.new_owner.get();
+
+        if new_owner != caller {
+            return Err(IssuerRegistryError::Unauthorized(Unauthorized {}));
+        }
+
+        let previous_owner = self.owner.get();
+
+        self.owner.set(new_owner);
+        self.new_owner.set(Address::ZERO);
+
+        log(
+            self.vm(),
+            OwnershipTransferred {
+                previous_owner,
+                new_owner,
+            },
+        );
+
+        Ok(())
     }
 
-    /// Increments `number` and updates its value in storage.
-    pub fn increment(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + U256::from(1));
-    }
-
-    /// Adds the wei value from msg_value to the number in storage.
-    #[payable]
-    pub fn add_from_msg_value(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + self.vm().msg_value());
+    pub fn is_issuer(&self, issuer_address: Address) -> Result<bool, IssuerRegistryError> {
+        Ok(self.is_registered.get(issuer_address))
     }
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
+    use core::str::FromStr;
+
     use super::*;
 
     #[test]
-    fn test_counter() {
+    fn test_issuer_registry() {
         use stylus_sdk::testing::*;
         let vm = TestVM::default();
-        let mut contract = Counter::from(&vm);
+        let mut issuer_registry_contract = IssuerRegistry::from(&vm);
 
-        assert_eq!(U256::ZERO, contract.number());
+        let init_owner = Address::from_word("owner");
+        vm.set_sender(init_owner);
 
-        contract.increment();
-        assert_eq!(U256::from(1), contract.number());
+        // initialize the issuer registry contract
+        let contract_init = issuer_registry_contract.constructor()?;
+        assert!(contract_init.is_ok());
 
-        contract.add_number(U256::from(3));
-        assert_eq!(U256::from(4), contract.number());
+        let sender_a = Address::from_word("alice");
 
-        contract.mul_number(U256::from(2));
-        assert_eq!(U256::from(8), contract.number());
+        vm.set_sender(sender_a);
+        // register as issuer
+        let register_issuer = issuer_registry_contract.register_as_issuer();
+        assert!(register_issuer.is_ok());
 
-        contract.set_number(U256::from(100));
-        assert_eq!(U256::from(100), contract.number());
+        let is_registered = issuer_registry_contract.is_issuer(sender_a);
+        assert!(is_registered.unwrap());
 
-        // Override the msg value for future contract method invocations.
-        vm.set_value(U256::from(2));
+        vm.set_sender(init_owner);
+        // transfer ownership
+        let transfer_ownership = issuer_registry_contract.transfer_ownership(sender_a);
+        assert!(transfer_ownership.is_ok());
 
-        contract.add_from_msg_value();
-        assert_eq!(U256::from(102), contract.number());
+        vm.set_sender(sender_a);
+
+        // claim ownership
+        let claim_ownership = issuer_registry_contract.claim_ownership();
+        assert!(claim_ownership.is_ok());
     }
 }

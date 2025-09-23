@@ -6,5 +6,5 @@ pub extern "C" fn main() {}
 
 #[cfg(feature = "export-abi")]
 fn main() {
-    repuatation_staking::print_from_args();
+    reputation_staking::print_from_args();
 }

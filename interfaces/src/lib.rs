@@ -4,24 +4,35 @@
 //! in the system to interact with each other without needing their full source code.
 
 #![cfg_attr(not(feature = "export-abi"), no_main)]
+#![cfg_attr(not(feature = "export-abi"), no_std)]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloy_primitives::{Address, U256};
-use stylus_sdk::stylus_proc::external;
+use stylus_sdk::alloy_sol_types::sol;
 
-/// Interface for the IssuerRegistry.
-/// The SBTFactory uses this to check if a caller is authorized.
-#[external]
-pub trait IIssuerRegistry {
-    /// Returns true if the given address is a registered issuer.
-    fn is_issuer(&self, issuer_address: Address) -> Result<bool, Vec<u8>>;
+// Define Solidity-compatible interfaces
+sol! {
+    interface IIssuerRegistry {
+        function is_issuer(address issuer_address) external view returns (bool);
+    }
+    
+    interface ISBT {
+        function owner_of(uint256 token_id) external view returns (address);
+        function balance_of(address owner) external view returns (uint256);
+    }
+    
+    interface ISBTFactory {
+        function deploy_sbt_contract(uint256 salt) external returns (address);
+        function is_authorized_deployer(address deployer) external view returns (bool);
+    }
+    
+    interface IReputationStaking {
+        function stake_of(address staker) external view returns (uint256);
+        function reputation_of(address staker) external view returns (uint256);
+    }
 }
 
-/// Interface for the SBT (Soulbound Token).
-/// The ReputationStaking contract uses this to verify token ownership.
-#[external]
-pub trait ISBT {
-    /// Returns the owner of a given token ID.
-    fn owner_of(&self, token_id: U256) -> Result<Address, Vec<u8>>;
-}
+// Re-export the interfaces for easier use
+pub use IIssuerRegistry::*;
+pub use ISBT::*;
+pub use ISBTFactory::*;
+pub use IReputationStaking::*;

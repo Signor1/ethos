@@ -9,14 +9,14 @@ const SVG_HEIGHT: i32 = 1000;
 const BACKGROUND_COLOR: &str = "#1a1a1a";
 
 // Hexagon center
-const CENTER_X: i32 = 200;
-const CENTER_Y: i32 = 200;
+const CENTER_X: i32 = 500;
+const CENTER_Y: i32 = 500;
 
 // Hexagon parameters
-const MIN_SIZE: usize = 80;
-const MAX_SIZE: usize = 140;
-const MIN_STROKE_WIDTH: usize = 4;
-const MAX_STROKE_WIDTH: usize = 12;
+const MIN_SIZE: usize = 150;
+const MAX_SIZE: usize = 250;
+const MIN_STROKE_WIDTH: usize = 12;
+const MAX_STROKE_WIDTH: usize = 24;
 
 // Color palette
 const COLORS: &[&str] = &[
@@ -47,7 +47,7 @@ impl SBTGenerator {
         let base64_svg = base64_encode(&svg);
 
         let metadata = format!(
-            r#"{{"name":"Ethos SBT","description":"Arbitrum-inspired Ethos SBT","image":"data:image/svg+xml;base64,{}"}}"#,
+            r#"{{"name":"Ethos SBT","description":"Ethos SBT on Arbitrum","image":"data:image/svg+xml;base64,{}"}}"#,
             base64_svg
         );
         let base64_metadata = base64_encode(&metadata);
@@ -78,15 +78,29 @@ impl SBTGenerator {
         )
         .unwrap();
 
-        // Generate hexagon path - using integer coordinates to avoid floating point
+        // Generate main hexagon path
         let hexagon_path = self.generate_hexagon_path(CENTER_X, CENTER_Y, size);
 
+        // Main hexagon
         write!(
-            svg,
-            r#"<path d="{}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"/>"#,
-            hexagon_path, color, stroke_width
-        )
-        .unwrap();
+                svg,
+                r#"<path d="{}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round" stroke-linecap="round"/>"#,
+                hexagon_path, color, stroke_width
+            ).unwrap();
+
+        // Optional: Add inner hexagon for more visual interest
+        if size > 180 {
+            // Only add if main hexagon is large enough
+            let inner_size = size - 40;
+            let inner_stroke = stroke_width / 2;
+            let inner_path = self.generate_hexagon_path(CENTER_X, CENTER_Y, inner_size);
+
+            write!(
+                    svg,
+                    r#"<path d="{}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round" stroke-linecap="round" opacity="0.6"/>"#,
+                    inner_path, color, inner_stroke
+                ).unwrap();
+        }
 
         write!(svg, r#"</svg>"#).unwrap();
 
@@ -140,22 +154,39 @@ mod tests {
         // Basic checks
         assert!(svg.contains("<path"));
         assert!(svg.contains("stroke="));
+        assert!(svg.contains("500"));
     }
 
     #[test]
-    fn test_hexagon_path() {
-        let seed = FixedBytes::<32>::random();
+    fn test_hexagon_centered() {
+        let seed = FixedBytes::<32>::from([0u8; 32]);
         let generator = SBTGenerator::new(seed);
-        let path = generator.generate_hexagon_path(200, 200, 100);
+        let path = generator.generate_hexagon_path(500, 500, 150);
 
+        // Should contain coordinates around center (500, 500)
+        assert!(path.contains("500"));
         assert!(path.starts_with("M "));
         assert!(path.contains(" L "));
         assert!(path.ends_with(" Z"));
     }
 
     #[test]
+    fn test_proper_sizing() {
+        let seed = FixedBytes::<32>::from([255u8; 32]); // Max values
+        let generator = SBTGenerator::new(seed);
+        let svg = generator.svg();
+
+        // Should use larger stroke widths
+        assert!(svg.contains("stroke-width=\"24\"") || svg.contains("stroke-width=\"12\""));
+
+        // Should not contain tiny values
+        assert!(!svg.contains("stroke-width=\"4\""));
+        assert!(!svg.contains("stroke-width=\"1\""));
+    }
+
+    #[test]
     fn test_no_floating_point() {
-        let seed = FixedBytes::<32>::random();
+        let seed = FixedBytes::<32>::from([128u8; 32]);
         let generator = SBTGenerator::new(seed);
         let svg = generator.svg();
 

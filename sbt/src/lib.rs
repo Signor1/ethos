@@ -14,7 +14,6 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 use alloy_sol_types::SolValue;
-use openzeppelin_stylus::token::erc721::{self, Erc721, IErc721};
 use stylus_sdk::{
     alloy_primitives::{Address, FixedBytes, U256},
     alloy_sol_types::sol,
@@ -25,21 +24,19 @@ use stylus_sdk::{
 sol_storage! {
     #[entrypoint]
     pub struct SBT {
-        #[borrow]
-        Erc721 erc721;
-
-        /// The address of the issuer who created this SBT collection.
-        address issuer;
         string name;
         string symbol;
-        /// The next token ID to be minted.
+        address issuer;
         uint256 next_token_id;
-        /// Mapping from token ID to unique bytes for on-chain uri
+        mapping(uint256 => address) owners;
+        mapping(address => uint256) balances;
         mapping(uint256 => bytes32) entropy;
     }
 }
 
 sol! {
+    // Events
+    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
     // Errors
     error NotTransferable();
     error Unauthorized();
@@ -50,38 +47,11 @@ sol! {
 
 #[derive(SolidityError)]
 pub enum SBTErrors {
-    // ERC721 errors
-    InvalidOwner(erc721::ERC721InvalidOwner),
-    NonexistentToken(erc721::ERC721NonexistentToken),
-    IncorrectOwner(erc721::ERC721IncorrectOwner),
-    InvalidSender(erc721::ERC721InvalidSender),
-    InvalidReceiver(erc721::ERC721InvalidReceiver),
-    InvalidReceiverWithReason(erc721::InvalidReceiverWithReason),
-    InsufficientApproval(erc721::ERC721InsufficientApproval),
-    InvalidApprover(erc721::ERC721InvalidApprover),
-    InvalidOperator(erc721::ERC721InvalidOperator),
-    // SBT specific errors
     NotTransferable(NotTransferable),
     Unauthorized(Unauthorized),
     TokenNotExists(TokenNotExists),
     ZeroAddress(ZeroAddress),
     EmptyArray(EmptyArray),
-}
-
-impl From<erc721::Error> for SBTErrors {
-    fn from(value: erc721::Error) -> Self {
-        match value {
-            erc721::Error::IncorrectOwner(e) => SBTErrors::IncorrectOwner(e),
-            erc721::Error::NonexistentToken(e) => SBTErrors::NonexistentToken(e),
-            erc721::Error::InvalidOwner(e) => SBTErrors::InvalidOwner(e),
-            erc721::Error::InvalidSender(e) => SBTErrors::InvalidSender(e),
-            erc721::Error::InvalidReceiver(e) => SBTErrors::InvalidReceiver(e),
-            erc721::Error::InvalidReceiverWithReason(e) => SBTErrors::InvalidReceiverWithReason(e),
-            erc721::Error::InsufficientApproval(e) => SBTErrors::InsufficientApproval(e),
-            erc721::Error::InvalidApprover(e) => SBTErrors::InvalidApprover(e),
-            erc721::Error::InvalidOperator(e) => SBTErrors::InvalidOperator(e),
-        }
-    }
 }
 
 impl SBT {
@@ -90,15 +60,18 @@ impl SBT {
         let block_number = self.vm().block_number();
         let msg_sender = self.vm().msg_sender();
         let chain_id = self.vm().chain_id();
-
         let hash_data =
             (block_number, msg_sender, chain_id, token_id, recipient).abi_encode_sequence();
         keccak(&hash_data)
     }
+
+    /// Internal function to check if token exists
+    fn token_exists(&self, token_id: U256) -> bool {
+        !self.owners.get(token_id).is_zero()
+    }
 }
 
 #[public]
-#[inherit(Erc721)]
 impl SBT {
     #[constructor]
     fn constructor(
@@ -110,13 +83,11 @@ impl SBT {
         if issuer.is_zero() {
             return Err(SBTErrors::ZeroAddress(ZeroAddress {}));
         }
-
         // Set SBT specific storage
         self.name.set_str(&name);
         self.symbol.set_str(&symbol);
         self.issuer.set(issuer);
         self.next_token_id.set(U256::from(1));
-
         Ok(())
     }
 
@@ -128,41 +99,59 @@ impl SBT {
         self.symbol.get_string()
     }
 
+    /// Returns the number of tokens in account's wallet
+    #[selector(name = "balanceOf")]
+    fn balance_of(&self, owner: Address) -> U256 {
+        if owner.is_zero() {
+            return U256::ZERO;
+        }
+        self.balances.get(owner)
+    }
+
+    /// Returns the owner of the token_id token
+    #[selector(name = "ownerOf")]
+    fn owner_of(&self, token_id: U256) -> Result<Address, SBTErrors> {
+        let owner = self.owners.get(token_id);
+        if owner.is_zero() {
+            return Err(SBTErrors::TokenNotExists(TokenNotExists {}));
+        }
+        Ok(owner)
+    }
+
     /// Generate token URI with circular design
     #[selector(name = "tokenURI")]
     fn token_uri(&self, token_id: U256) -> Result<String, SBTErrors> {
-        // Check if token exists by trying to get owner
-        if self.erc721.owner_of(token_id).is_err() {
+        if !self.token_exists(token_id) {
             return Err(SBTErrors::TokenNotExists(TokenNotExists {}));
         }
-
         let seed = self.entropy.get(token_id);
         let generator = generator::SBTGenerator::new(seed);
-        let metadata = generator.metadata();
-        Ok(metadata)
+        Ok(generator.metadata())
     }
 
     fn mint_to_one(&mut self, to: Address) -> Result<U256, SBTErrors> {
-        // Only issuer can mint
         if self.vm().msg_sender() != self.issuer.get() {
             return Err(SBTErrors::Unauthorized(Unauthorized {}));
         }
-
         if to.is_zero() {
             return Err(SBTErrors::ZeroAddress(ZeroAddress {}));
         }
-
         let token_id = self.next_token_id.get();
-
-        // Generate deterministic entropy for this token
         let seed = self.generate_entropy(token_id, to);
         self.entropy.setter(token_id).set(seed);
-
-        // Mint via ERC721 base contract
-        self.erc721._mint(to, token_id)?;
-
-        // Increment next token ID
+        self.owners.insert(token_id, to);
+        let current_balance = self.balances.get(to);
+        self.balances.insert(to, current_balance + U256::from(1));
         self.next_token_id.set(token_id + U256::from(1));
+
+        log(
+            self.vm(),
+            Transfer {
+                from: Address::ZERO,
+                to,
+                tokenId: token_id,
+            },
+        );
 
         Ok(token_id)
     }
@@ -172,7 +161,6 @@ impl SBT {
         if self.vm().msg_sender() != self.issuer.get() {
             return Err(SBTErrors::Unauthorized(Unauthorized {}));
         }
-
         if recipients.is_empty() {
             return Err(SBTErrors::EmptyArray(EmptyArray {}));
         }
@@ -188,9 +176,20 @@ impl SBT {
             // Generate entropy for this token
             let seed = self.generate_entropy(current_token_id, *recipient);
             self.entropy.setter(current_token_id).set(seed);
+            self.owners.insert(current_token_id, *recipient);
 
-            // Mint via ERC721 base contract
-            self.erc721._mint(*recipient, current_token_id)?;
+            let current_balance = self.balances.get(*recipient);
+            self.balances
+                .insert(*recipient, current_balance + U256::from(1));
+
+            log(
+                self.vm(),
+                Transfer {
+                    from: Address::ZERO,
+                    to: *recipient,
+                    tokenId: current_token_id,
+                },
+            );
 
             token_ids.push(current_token_id);
             current_token_id += U256::from(1);
@@ -219,11 +218,21 @@ impl SBT {
         }
     }
 
+    /// Check if interface is supported (minimal ERC165 implementation)
+    #[selector(name = "supportsInterface")]
+    fn supports_interface(&self, interface_id: FixedBytes<4>) -> bool {
+        // ERC721 interface ID: 0x80ac58cd
+        // ERC165 interface ID: 0x01ffc9a7
+        interface_id == FixedBytes([0x80, 0xac, 0x58, 0xcd]) || // ERC721
+            interface_id == FixedBytes([0x01, 0xff, 0xc9, 0xa7]) // ERC165
+    }
+
     ///#######################################################
     /// DISABLED TRANSFER FUNCTIONS (Soulbound implementation)
     ///########################################################
 
     /// Disabled: SBTs cannot be transferred
+    #[selector(name = "transferFrom")]
     fn transfer_from(
         &mut self,
         _from: Address,
@@ -233,38 +242,8 @@ impl SBT {
         Err(SBTErrors::NotTransferable(NotTransferable {}))
     }
 
-    /// Disabled: SBTs cannot be safely transferred
-    fn safe_transfer_from(
-        &mut self,
-        _from: Address,
-        _to: Address,
-        _token_id: U256,
-    ) -> Result<(), SBTErrors> {
-        Err(SBTErrors::NotTransferable(NotTransferable {}))
-    }
-
-    /// Disabled: SBTs cannot be safely transferred with data
-    fn safe_transfer_from_with_data(
-        &mut self,
-        _from: Address,
-        _to: Address,
-        _token_id: U256,
-        _data: Vec<u8>,
-    ) -> Result<(), SBTErrors> {
-        Err(SBTErrors::NotTransferable(NotTransferable {}))
-    }
-
     /// Disabled: SBTs cannot be approved for transfer
     pub fn approve(&mut self, _to: Address, _token_id: U256) -> Result<(), SBTErrors> {
-        Err(SBTErrors::NotTransferable(NotTransferable {}))
-    }
-
-    /// Disabled: SBTs cannot be approved for all
-    pub fn set_approval_for_all(
-        &mut self,
-        _operator: Address,
-        _approved: bool,
-    ) -> Result<(), SBTErrors> {
         Err(SBTErrors::NotTransferable(NotTransferable {}))
     }
 }
@@ -305,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mint_to_one() {
+    fn test_mint_and_balance() {
         let (vm, mut sbt) = setup_sbt();
         let recipient = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
         let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
@@ -317,8 +296,12 @@ mod tests {
 
         if let Ok(token_id) = result {
             assert_eq!(token_id, U256::from(1));
-            assert!(sbt.erc721.owner_of(token_id).is_ok());
+            assert_eq!(sbt.balance_of(recipient), U256::from(1));
+            assert!(sbt.owner_of(token_id).is_ok());
             assert_eq!(sbt.total_supply(), U256::from(1));
+            if let Ok(addr) = sbt.owner_of(token_id) {
+                assert_eq!(addr, recipient);
+            }
         }
     }
 
@@ -377,5 +360,22 @@ mod tests {
                 assert!(uri.starts_with("data:application/json;base64,"));
             }
         }
+    }
+
+    #[test]
+    fn test_supports_interface() {
+        let (_vm, sbt) = setup_sbt();
+
+        // Test ERC721 interface
+        let erc721_id = FixedBytes([0x80, 0xac, 0x58, 0xcd]);
+        assert!(sbt.supports_interface(erc721_id));
+
+        // Test ERC165 interface
+        let erc165_id = FixedBytes([0x01, 0xff, 0xc9, 0xa7]);
+        assert!(sbt.supports_interface(erc165_id));
+
+        // Test unsupported interface
+        let random_id = FixedBytes([0x12, 0x34, 0x56, 0x78]);
+        assert!(!sbt.supports_interface(random_id));
     }
 }

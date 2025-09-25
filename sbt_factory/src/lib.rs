@@ -13,24 +13,9 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::Address;
 use stylus_sdk::{alloy_primitives::U256, alloy_sol_types::sol, prelude::*};
 
-// Interface for interacting with IssuerRegistry
-sol_interface! {
-    interface IIssuerRegistry {
-        function is_issuer(address issuer_address) external view returns (bool);
-    }
-}
-
-sol_interface! {
-    interface Isbt {
-        function get_issuer() external view returns (address);
-    }
-}
-
 sol_storage! {
     #[entrypoint]
     pub struct SBTFactory {
-        /// The address of the IssuerRegistry contract
-        address issuer_registry_address;
         /// All SBT collection addresses created
         address[] all_sbt_collections;
         /// Mapping from issuer address to their SBT collections
@@ -59,18 +44,14 @@ sol! {
 
     // Errors
     error AddressZeroNotAllowed();
-    error CallerNotIssuer();
     error EmptyString();
-    error SBTNotDeployedByIssuer();
     error ContractAlreadyRegistered();
 }
 
 #[derive(SolidityError)]
 pub enum SBTFactoryError {
     AddressZeroNotAllowed(AddressZeroNotAllowed),
-    CallerNotIssuer(CallerNotIssuer),
     EmptyString(EmptyString),
-    SBTNotDeployedByIssuer(SBTNotDeployedByIssuer),
     ContractAlreadyRegistered(ContractAlreadyRegistered),
 }
 
@@ -109,16 +90,8 @@ impl SBTFactory {
 #[public]
 impl SBTFactory {
     #[constructor]
-    fn constructor(&mut self, registry_address: Address) -> Result<(), SBTFactoryError> {
-        if registry_address.is_zero() {
-            return Err(SBTFactoryError::AddressZeroNotAllowed(
-                AddressZeroNotAllowed {},
-            ));
-        }
-
-        self.issuer_registry_address.set(registry_address);
+    fn constructor(&mut self) {
         self.total_collections_count.set(U256::ZERO);
-        Ok(())
     }
 
     /// Register an SBT collection
@@ -152,36 +125,8 @@ impl SBTFactory {
             ));
         }
 
-        let registry = IIssuerRegistry::new(self.issuer_registry_address.get());
-        match registry.is_issuer(&mut *self, issuer) {
-            Ok(is_issuer) => {
-                if !is_issuer {
-                    return Err(SBTFactoryError::CallerNotIssuer(CallerNotIssuer {}));
-                }
-            }
-            Err(_) => return Err(SBTFactoryError::CallerNotIssuer(CallerNotIssuer {})),
-        }
-
-        let sbt = Isbt::new(sbt_address);
-        match sbt.get_issuer(&mut *self) {
-            Ok(sbt_issuer) => {
-                if sbt_issuer != issuer {
-                    return Err(SBTFactoryError::SBTNotDeployedByIssuer(
-                        SBTNotDeployedByIssuer {},
-                    ));
-                }
-            }
-            Err(_) => {
-                return Err(SBTFactoryError::SBTNotDeployedByIssuer(
-                    SBTNotDeployedByIssuer {},
-                ))
-            }
-        }
-
-        // Record the collection
         self.record_sbt_collection(issuer, name.clone(), symbol.clone(), sbt_address)?;
 
-        // Emit event
         log(
             self.vm(),
             SBTCollectionRegistered {
@@ -191,7 +136,6 @@ impl SBTFactory {
                 symbol,
             },
         );
-
         Ok(())
     }
 
@@ -221,76 +165,40 @@ impl SBTFactory {
     fn get_total_collections(&self) -> U256 {
         self.total_collections_count.get()
     }
-
-    fn get_issuer_registry(&self) -> Address {
-        self.issuer_registry_address.get()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::{address, Address, U256};
-    use stylus_sdk::{crypto::keccak, testing::*};
+    use stylus_sdk::testing::*;
 
     fn setup_factory() -> (TestVM, SBTFactory) {
         let vm = TestVM::default();
         let mut factory = SBTFactory::from(&vm);
-
-        let registry_addr = address!("1111111111111111111111111111111111111111");
-
-        let result = factory.constructor(registry_addr);
-        assert!(result.is_ok());
-
+        let _result = factory.constructor();
         (vm, factory)
     }
 
-    fn mock_is_issuer(vm: &mut TestVM, registry_addr: Address, issuer: Address, is_issuer: bool) {
-        // Compute selector for is_issuer(address) -> keccak256("is_issuer(address)")
-        let selector = keccak("is_issuer(address)".as_bytes())[0..4].to_vec();
-        let mut calldata: Vec<u8> = selector;
-        let mut padded_address = [0u8; 32];
-        padded_address[12..32].copy_from_slice(&issuer.into_array());
-        calldata.extend_from_slice(&padded_address);
-
-        // Return true (1) or false (0) as a 32-byte value
-        let ret_val = if is_issuer { U256::from(1) } else { U256::ZERO };
-        let ret_data = ret_val.to_be_bytes::<32>().to_vec();
-
-        vm.mock_call(registry_addr, calldata, Ok(ret_data));
-    }
-
-    fn mock_get_issuer(vm: &mut TestVM, sbt_addr: Address, returned_issuer: Address) {
-        // Compute selector for get_issuer() -> keccak256("get_issuer()")
-        let selector = keccak("get_issuer()".as_bytes())[0..4].to_vec();
-        let calldata: Vec<u8> = selector;
-
-        // Return address as 32-byte value (left-padded with zeros)
-        let mut padded_address = [0u8; 32];
-        padded_address[12..32].copy_from_slice(&returned_issuer.into_array());
-        let ret_data = padded_address.to_vec();
-
-        vm.mock_call(sbt_addr, calldata, Ok(ret_data));
-    }
-
     #[test]
-    fn test_initialization() {
+    fn test_constructor_initialization() {
         let (_vm, factory) = setup_factory();
-
-        assert_eq!(
-            factory.get_issuer_registry(),
-            address!("1111111111111111111111111111111111111111")
-        );
         assert_eq!(factory.get_total_collections(), U256::ZERO);
     }
 
     #[test]
-    fn test_empty_collections_list() {
-        let (_vm, factory) = setup_factory();
-        let issuer = address!("3333333333333333333333333333333333333333");
+    fn test_register_sbt_collection_success() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
-        let collections = factory.get_issuer_collections(issuer);
-        assert!(collections.is_empty());
+        vm.set_sender(issuer);
+        let result =
+            factory.register_sbt_collection(sbt_addr, "Test SBT".to_string(), "TSBT".to_string());
+
+        assert!(result.is_ok());
+        assert_eq!(factory.get_total_collections(), U256::from(1));
+        assert!(factory.is_valid_sbt_contract(sbt_addr));
     }
 
     #[test]
@@ -309,49 +217,266 @@ mod tests {
     }
 
     #[test]
+    fn test_register_multiple_collections_same_issuer() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr1 = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let sbt_addr2 = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+
+        vm.set_sender(issuer);
+
+        // Register first collection
+        let result1 =
+            factory.register_sbt_collection(sbt_addr1, "First SBT".to_string(), "FSBT".to_string());
+        assert!(result1.is_ok());
+
+        // Register second collection
+        let result2 = factory.register_sbt_collection(
+            sbt_addr2,
+            "Second SBT".to_string(),
+            "SSBT".to_string(),
+        );
+        assert!(result2.is_ok());
+
+        assert_eq!(factory.get_total_collections(), U256::from(2));
+        assert!(factory.is_valid_sbt_contract(sbt_addr1));
+        assert!(factory.is_valid_sbt_contract(sbt_addr2));
+
+        // Check issuer collections
+        let collections = factory.get_issuer_collections(issuer);
+        assert_eq!(collections.len(), 2);
+        assert_eq!(collections[0].0, "First SBT");
+        assert_eq!(collections[1].0, "Second SBT");
+    }
+
+    #[test]
+    fn test_register_multiple_issuers() {
+        let (vm, mut factory) = setup_factory();
+        let issuer1 = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let issuer2 = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let sbt_addr1 = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+        let sbt_addr2 = address!("90F79bf6EB2c4f870365E785982E1f101E93b906");
+
+        // Register from first issuer
+        vm.set_sender(issuer1);
+        let result1 = factory.register_sbt_collection(
+            sbt_addr1,
+            "Issuer1 SBT".to_string(),
+            "I1SBT".to_string(),
+        );
+        assert!(result1.is_ok());
+
+        // Register from second issuer
+        vm.set_sender(issuer2);
+        let result2 = factory.register_sbt_collection(
+            sbt_addr2,
+            "Issuer2 SBT".to_string(),
+            "I2SBT".to_string(),
+        );
+        assert!(result2.is_ok());
+
+        assert_eq!(factory.get_total_collections(), U256::from(2));
+
+        // Check each issuer's collections
+        let collections1 = factory.get_issuer_collections(issuer1);
+        let collections2 = factory.get_issuer_collections(issuer2);
+
+        assert_eq!(collections1.len(), 1);
+        assert_eq!(collections2.len(), 1);
+        assert_eq!(collections1[0].0, "Issuer1 SBT");
+        assert_eq!(collections2[0].0, "Issuer2 SBT");
+    }
+
+    #[test]
     fn test_register_zero_sbt_address() {
         let (vm, mut factory) = setup_factory();
-        let issuer = address!("2222222222222222222222222222222222222222");
-        vm.set_sender(issuer);
-        let name = "Test SBT".to_string();
-        let symbol = "TSBT".to_string();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-        let res = factory.register_sbt_collection(Address::ZERO, name, symbol);
+        vm.set_sender(issuer);
+        let result = factory.register_sbt_collection(
+            Address::ZERO,
+            "Test SBT".to_string(),
+            "TSBT".to_string(),
+        );
+
         assert!(matches!(
-            res,
+            result,
             Err(SBTFactoryError::AddressZeroNotAllowed(_))
         ));
     }
 
     #[test]
     fn test_register_empty_name() {
-        let (mut vm, mut factory) = setup_factory();
-        let issuer = address!("2222222222222222222222222222222222222222");
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
         vm.set_sender(issuer);
-        let sbt_addr = address!("3333333333333333333333333333333333333333");
-        let symbol = "TSBT".to_string();
+        let result = factory.register_sbt_collection(sbt_addr, String::new(), "TSBT".to_string());
 
-        let registry_addr = factory.get_issuer_registry();
-        mock_is_issuer(&mut vm, registry_addr, issuer, true);
-        mock_get_issuer(&mut vm, sbt_addr, issuer);
-
-        let res = factory.register_sbt_collection(sbt_addr, String::new(), symbol);
-        assert!(matches!(res, Err(SBTFactoryError::EmptyString(_))));
+        assert!(matches!(result, Err(SBTFactoryError::EmptyString(_))));
     }
 
     #[test]
     fn test_register_empty_symbol() {
-        let (mut vm, mut factory) = setup_factory();
-        let issuer = address!("2222222222222222222222222222222222222222");
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
         vm.set_sender(issuer);
-        let sbt_addr = address!("3333333333333333333333333333333333333333");
-        let name = "Test SBT".to_string();
+        let result =
+            factory.register_sbt_collection(sbt_addr, "Test SBT".to_string(), String::new());
 
-        let registry_addr = factory.get_issuer_registry();
-        mock_is_issuer(&mut vm, registry_addr, issuer, true);
-        mock_get_issuer(&mut vm, sbt_addr, issuer);
+        assert!(matches!(result, Err(SBTFactoryError::EmptyString(_))));
+    }
 
-        let res = factory.register_sbt_collection(sbt_addr, name, String::new());
-        assert!(matches!(res, Err(SBTFactoryError::EmptyString(_))));
+    #[test]
+    fn test_register_duplicate_contract() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+        vm.set_sender(issuer);
+
+        // Register first time - should succeed
+        let result1 =
+            factory.register_sbt_collection(sbt_addr, "Test SBT".to_string(), "TSBT".to_string());
+        assert!(result1.is_ok());
+
+        // Register same address again - should fail
+        let result2 = factory.register_sbt_collection(
+            sbt_addr,
+            "Another SBT".to_string(),
+            "ASBT".to_string(),
+        );
+        assert!(matches!(
+            result2,
+            Err(SBTFactoryError::ContractAlreadyRegistered(_))
+        ));
+    }
+
+    // VIEW FUNCTION TESTS
+
+    #[test]
+    fn test_get_issuer_collections_empty() {
+        let (_vm, factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+        let collections = factory.get_issuer_collections(issuer);
+        assert!(collections.is_empty());
+    }
+
+    #[test]
+    fn test_get_issuer_collections_with_data() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+        vm.set_sender(issuer);
+        let _ = factory.register_sbt_collection(
+            sbt_addr,
+            "Test SBT Collection".to_string(),
+            "TSBT".to_string(),
+        );
+
+        let collections = factory.get_issuer_collections(issuer);
+        assert_eq!(collections.len(), 1);
+        assert_eq!(
+            collections[0],
+            (
+                "Test SBT Collection".to_string(),
+                "TSBT".to_string(),
+                sbt_addr
+            )
+        );
+    }
+
+    #[test]
+    fn test_is_valid_sbt_contract_false() {
+        let (_vm, factory) = setup_factory();
+        let random_addr = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+        assert!(!factory.is_valid_sbt_contract(random_addr));
+    }
+
+    #[test]
+    fn test_is_valid_sbt_contract_true() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+        vm.set_sender(issuer);
+        let _ =
+            factory.register_sbt_collection(sbt_addr, "Test SBT".to_string(), "TSBT".to_string());
+
+        assert!(factory.is_valid_sbt_contract(sbt_addr));
+    }
+
+    #[test]
+    fn test_get_total_collections_increments() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+        vm.set_sender(issuer);
+        assert_eq!(factory.get_total_collections(), U256::ZERO);
+
+        // Register first collection
+        let _ = factory.register_sbt_collection(
+            address!("70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+            "SBT1".to_string(),
+            "SBT1".to_string(),
+        );
+        assert_eq!(factory.get_total_collections(), U256::from(1));
+
+        // Register second collection
+        let _ = factory.register_sbt_collection(
+            address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+            "SBT2".to_string(),
+            "SBT2".to_string(),
+        );
+        assert_eq!(factory.get_total_collections(), U256::from(2));
+    }
+
+    // EDGE CASE TESTS
+
+    #[test]
+    fn test_different_issuer_same_name_symbol() {
+        let (vm, mut factory) = setup_factory();
+        let issuer1 = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let issuer2 = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let sbt_addr1 = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
+        let sbt_addr2 = address!("90F79bf6EB2c4f870365E785982E1f101E93b906");
+
+        // Same name and symbol but different addresses should work
+        vm.set_sender(issuer1);
+        let result1 =
+            factory.register_sbt_collection(sbt_addr1, "Same Name".to_string(), "SAME".to_string());
+        assert!(result1.is_ok());
+
+        vm.set_sender(issuer2);
+        let result2 =
+            factory.register_sbt_collection(sbt_addr2, "Same Name".to_string(), "SAME".to_string());
+        assert!(result2.is_ok());
+
+        assert_eq!(factory.get_total_collections(), U256::from(2));
+    }
+
+    #[test]
+    fn test_very_long_name_and_symbol() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let sbt_addr = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+        vm.set_sender(issuer);
+        let long_name = "A".repeat(100);
+        let long_symbol = "B".repeat(50);
+
+        let result =
+            factory.register_sbt_collection(sbt_addr, long_name.clone(), long_symbol.clone());
+        assert!(result.is_ok());
+
+        let collections = factory.get_issuer_collections(issuer);
+        assert_eq!(collections[0].0, long_name);
+        assert_eq!(collections[0].1, long_symbol);
     }
 }

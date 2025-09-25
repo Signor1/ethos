@@ -6,7 +6,7 @@ use crate::base64::base64_encode;
 
 const SVG_WIDTH: i32 = 1000;
 const SVG_HEIGHT: i32 = 1000;
-const BACKGROUND_COLOR: &str = "#1a1a1a";
+const BACKGROUND_COLOR: &str = "#0C0404";
 
 // Hexagon center
 const CENTER_X: i32 = 500;

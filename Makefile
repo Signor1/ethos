@@ -5,7 +5,7 @@ WASM_TARGET = wasm32-unknown-unknown
 RUST_VERSION = 1.89.0
 
 # Contract directories (individual projects, not workspace members)
-CONTRACTS = issuer_registry sbt sbt_factory reputation_staking
+CONTRACTS = issuer_registry sbt sbt_factory
 
 # Colors for output
 GREEN = \033[0;32m
@@ -233,7 +233,7 @@ $(addprefix deploy-devnet-,$(CONTRACTS)): check-env
 	echo "$(YELLOW)Deploying $$contract...$(NC)"; \
 	cd $$contract && cargo stylus deploy \
 		--endpoint="$(DEVNET_RPC_URL)" \
-		--private-key="$(DEVNET_PRIVATE_KEY)"	
+		--private-key="$(DEVNET_PRIVATE_KEY)"
 
 .PHONY: $(addprefix deploy-testnet-,$(CONTRACTS))
 $(addprefix deploy-testnet-,$(CONTRACTS)): check-env
@@ -295,4 +295,4 @@ install: setup frontend-install
 
 .PHONY: all
 all: clean fmt clippy test check build export-abi
-	@echo "$(GREEN)Full build pipeline complete!$(NC)"	
+	@echo "$(GREEN)Full build pipeline complete!$(NC)"

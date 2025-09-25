@@ -1,16 +1,6 @@
 //!
-//! # Soul Bound Token (SBT) Factory Contract
-//!
-//! A factory contract for creating and managing multiple SBT contracts.
-//! This contract allows authorized users to deploy new SBT contracts and keeps track of them.
-//!
-//! ## Features
-//! - Deploy new SBT contracts
-//! - Track deployed contracts
-//! - Manage deployment permissions
-//! - Query deployed contracts by deployer
-//!
-//! Note: This code is for educational purposes and has not been audited.
+//! # SBT Factory Contract
+//! Allows registered issuers to have new SBT collections deployed and registered.
 //!
 // Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
@@ -19,366 +9,349 @@
 #[macro_use]
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloy_primitives::{ Address, U256 };
-use stylus_sdk::{ alloy_sol_types::sol, prelude::* };
+use alloc::{string::String, vec::Vec};
+use alloy_primitives::Address;
+use stylus_sdk::{alloy_primitives::U256, alloy_sol_types::sol, prelude::*};
 
-// Define persistent storage for the SBT Factory contract
+// Interface for interacting with IssuerRegistry
+sol_interface! {
+    interface IIssuerRegistry {
+        function is_issuer(address issuer_address) external view returns (bool);
+    }
+}
+
+sol_interface! {
+    interface Isbt {
+        function get_issuer() external view returns (address);
+    }
+}
+
 sol_storage! {
     #[entrypoint]
     pub struct SBTFactory {
-        /// Contract owner
-        address owner;
-        /// Total number of deployed contracts
-        uint256 total_deployed;
-        /// Mapping from deployer to their deployed contracts
-        mapping(address => address[]) deployed_by;
-        /// Mapping from contract address to deployer
-        mapping(address => address) contract_deployers;
-        /// Mapping to track if an address can deploy contracts
-        mapping(address => bool) authorized_deployers;
-        /// Array of all deployed contracts
-        address[] all_contracts;
+        /// The address of the IssuerRegistry contract
+        address issuer_registry_address;
+        /// All SBT collection addresses created
+        address[] all_sbt_collections;
+        /// Mapping from issuer address to their SBT collections
+        mapping(address => SBTCollectionStorage[]) issuer_collections;
+        /// Mapping to check if an address is a valid SBT from this factory
+        mapping(address => bool) is_valid_sbt;
+        /// Total number of collections created
+        uint256 total_collections_count;
+    }
+
+    pub struct SBTCollectionStorage {
+        string name;
+        string symbol;
+        address sbt_address;
     }
 }
 
-// Define Solidity events and errors
 sol! {
-    /// Emitted when a new SBT contract is deployed
-    event SBTContractDeployed(
-        address indexed deployer,
-        address indexed contract_address,
-        uint256 indexed deployment_id
+    // Events
+    event SBTCollectionRegistered(
+        address indexed issuer,
+        address indexed sbt_address,
+        string name,
+        string symbol,
     );
-    
-    /// Emitted when a deployer is authorized
-    event DeployerAuthorized(address indexed deployer);
-    
-    /// Emitted when a deployer is deauthorized
-    event DeployerDeauthorized(address indexed deployer);
-    
-    /// Emitted when ownership is transferred
-    event OwnershipTransferred(address indexed previous_owner, address indexed new_owner);
-    
-    // Custom error types
-    error NotOwner();
-    error NotAuthorizedDeployer();
+
+    // Errors
     error AddressZeroNotAllowed();
-    error DeployerAlreadyAuthorized();
-    error DeployerNotAuthorized();
-    error ContractNotFound();
-    error DeploymentFailed();
-    error InvalidIndex();
+    error CallerNotIssuer();
+    error EmptyString();
+    error SBTNotDeployedByIssuer();
+    error ContractAlreadyRegistered();
 }
 
-/// Custom error enum for SBT Factory contract
 #[derive(SolidityError)]
 pub enum SBTFactoryError {
-    /// Caller is not the contract owner
-    NotOwner(NotOwner),
-    /// Caller is not an authorized deployer
-    NotAuthorizedDeployer(NotAuthorizedDeployer),
-    /// Zero address is not allowed for this operation
     AddressZeroNotAllowed(AddressZeroNotAllowed),
-    /// Deployer is already authorized
-    DeployerAlreadyAuthorized(DeployerAlreadyAuthorized),
-    /// Deployer is not authorized
-    DeployerNotAuthorized(DeployerNotAuthorized),
-    /// Contract not found
-    ContractNotFound(ContractNotFound),
-    /// Deployment failed
-    DeploymentFailed(DeploymentFailed),
-    /// Invalid index provided
-    InvalidIndex(InvalidIndex),
+    CallerNotIssuer(CallerNotIssuer),
+    EmptyString(EmptyString),
+    SBTNotDeployedByIssuer(SBTNotDeployedByIssuer),
+    ContractAlreadyRegistered(ContractAlreadyRegistered),
 }
 
-/// Declare that `SBTFactory` is a contract with the following external methods.
+impl SBTFactory {
+    fn record_sbt_collection(
+        &mut self,
+        issuer: Address,
+        name: String,
+        symbol: String,
+        sbt_address: Address,
+    ) -> Result<(), SBTFactoryError> {
+        // Get the storage vector and add a new entry
+        let mut collections_setter = self.issuer_collections.setter(issuer);
+        let mut new_collection = collections_setter.grow();
+
+        // Set the fields directly on the storage struct
+        new_collection.name.set_str(&name);
+        new_collection.symbol.set_str(&symbol);
+        new_collection.sbt_address.set(sbt_address);
+
+        // Add to global list
+        self.all_sbt_collections.push(sbt_address);
+
+        // Mark as valid SBT
+        self.is_valid_sbt.insert(sbt_address, true);
+
+        // Increment total count
+        let current_count = self.total_collections_count.get();
+        self.total_collections_count
+            .set(current_count + U256::from(1));
+
+        Ok(())
+    }
+}
+
 #[public]
 impl SBTFactory {
-    /// Constructor - initializes the contract with the deployer as owner
     #[constructor]
-    pub fn constructor(&mut self) -> Result<(), SBTFactoryError> {
-        let owner = self.vm().tx_origin();
-
-        if owner.is_zero() {
-            return Err(SBTFactoryError::AddressZeroNotAllowed(AddressZeroNotAllowed {}));
+    fn constructor(&mut self, registry_address: Address) -> Result<(), SBTFactoryError> {
+        if registry_address.is_zero() {
+            return Err(SBTFactoryError::AddressZeroNotAllowed(
+                AddressZeroNotAllowed {},
+            ));
         }
 
-        self.owner.set(owner);
-        self.total_deployed.set(U256::ZERO);
+        self.issuer_registry_address.set(registry_address);
+        self.total_collections_count.set(U256::ZERO);
+        Ok(())
+    }
 
-        log(self.vm(), OwnershipTransferred {
-            previous_owner: Address::ZERO,
-            new_owner: owner,
-        });
+    /// Register an SBT collection
+    ///
+    /// How it works in Stylus:
+    /// 1. Issuer deploys SBT contract externally using `cargo stylus deploy` or thirdweb client (frontend)
+    /// 2. Issuer calls this function to register their deployed SBT with the factory
+    /// 3. Factory verifies the issuer owns the SBT contract
+    /// 4. Factory tracks the SBT for management purposes
+    fn register_sbt_collection(
+        &mut self,
+        sbt_address: Address,
+        name: String,
+        symbol: String,
+    ) -> Result<(), SBTFactoryError> {
+        let issuer = self.vm().msg_sender();
+
+        if issuer.is_zero() || sbt_address.is_zero() {
+            return Err(SBTFactoryError::AddressZeroNotAllowed(
+                AddressZeroNotAllowed {},
+            ));
+        }
+
+        if name.is_empty() || symbol.is_empty() {
+            return Err(SBTFactoryError::EmptyString(EmptyString {}));
+        }
+
+        if self.is_valid_sbt.get(sbt_address) {
+            return Err(SBTFactoryError::ContractAlreadyRegistered(
+                ContractAlreadyRegistered {},
+            ));
+        }
+
+        let registry = IIssuerRegistry::new(self.issuer_registry_address.get());
+        match registry.is_issuer(&mut *self, issuer) {
+            Ok(is_issuer) => {
+                if !is_issuer {
+                    return Err(SBTFactoryError::CallerNotIssuer(CallerNotIssuer {}));
+                }
+            }
+            Err(_) => return Err(SBTFactoryError::CallerNotIssuer(CallerNotIssuer {})),
+        }
+
+        let sbt = Isbt::new(sbt_address);
+        match sbt.get_issuer(&mut *self) {
+            Ok(sbt_issuer) => {
+                if sbt_issuer != issuer {
+                    return Err(SBTFactoryError::SBTNotDeployedByIssuer(
+                        SBTNotDeployedByIssuer {},
+                    ));
+                }
+            }
+            Err(_) => {
+                return Err(SBTFactoryError::SBTNotDeployedByIssuer(
+                    SBTNotDeployedByIssuer {},
+                ))
+            }
+        }
+
+        // Record the collection
+        self.record_sbt_collection(issuer, name.clone(), symbol.clone(), sbt_address)?;
+
+        // Emit event
+        log(
+            self.vm(),
+            SBTCollectionRegistered {
+                issuer,
+                sbt_address,
+                name,
+                symbol,
+            },
+        );
 
         Ok(())
     }
 
-    /// Gets the owner of the contract
-    pub fn owner(&self) -> Address {
-        self.owner.get()
-    }
-
-    /// Gets the total number of deployed SBT contracts
-    pub fn total_deployed(&self) -> U256 {
-        self.total_deployed.get()
-    }
-
-    /// Checks if an address is an authorized deployer
-    ///
-    /// # Arguments
-    /// * `deployer` - Address to check authorization for
-    ///
-    /// # Returns
-    /// True if the address is authorized to deploy SBT contracts
-    pub fn is_authorized_deployer(&self, deployer: Address) -> bool {
-        deployer == self.owner.get() || self.authorized_deployers.get(deployer)
-    }
-
-    /// Authorizes a deployer to create SBT contracts
-    ///
-    /// # Arguments
-    /// * `deployer` - Address to authorize as deployer
-    ///
-    /// # Returns
-    /// Result indicating success or error
-    ///
-    /// # Errors
-    /// * `NotOwner` - If caller is not the contract owner
-    /// * `AddressZeroNotAllowed` - If deployer address is zero
-    /// * `DeployerAlreadyAuthorized` - If deployer is already authorized
-    pub fn authorize_deployer(&mut self, deployer: Address) -> Result<(), SBTFactoryError> {
-        if self.vm().msg_sender() != self.owner.get() {
-            return Err(SBTFactoryError::NotOwner(NotOwner {}));
-        }
-
-        if deployer.is_zero() {
-            return Err(SBTFactoryError::AddressZeroNotAllowed(AddressZeroNotAllowed {}));
-        }
-
-        if self.authorized_deployers.get(deployer) {
-            return Err(SBTFactoryError::DeployerAlreadyAuthorized(DeployerAlreadyAuthorized {}));
-        }
-
-        self.authorized_deployers.insert(deployer, true);
-
-        log(self.vm(), DeployerAuthorized { deployer });
-
-        Ok(())
-    }
-
-    /// Deauthorizes a deployer from creating SBT contracts
-    ///
-    /// # Arguments
-    /// * `deployer` - Address to deauthorize
-    ///
-    /// # Returns
-    /// Result indicating success or error
-    ///
-    /// # Errors
-    /// * `NotOwner` - If caller is not the contract owner
-    /// * `DeployerNotAuthorized` - If deployer is not currently authorized
-    pub fn deauthorize_deployer(&mut self, deployer: Address) -> Result<(), SBTFactoryError> {
-        if self.vm().msg_sender() != self.owner.get() {
-            return Err(SBTFactoryError::NotOwner(NotOwner {}));
-        }
-
-        if !self.authorized_deployers.get(deployer) {
-            return Err(SBTFactoryError::DeployerNotAuthorized(DeployerNotAuthorized {}));
-        }
-
-        self.authorized_deployers.insert(deployer, false);
-
-        log(self.vm(), DeployerDeauthorized { deployer });
-
-        Ok(())
-    }
-
-    /// Deploys a new SBT contract (simplified - would use CREATE2 in production)
-    ///
-    /// # Arguments
-    /// * `salt` - Salt for deterministic deployment
-    ///
-    /// # Returns
-    /// Result containing the new contract address or error
-    ///
-    /// # Errors
-    /// * `NotAuthorizedDeployer` - If caller is not authorized to deploy contracts
-    /// * `DeploymentFailed` - If contract deployment fails
-    pub fn deploy_sbt_contract(&mut self, salt: U256) -> Result<Address, SBTFactoryError> {
-        let deployer = self.vm().msg_sender();
-
-        if !self.is_authorized_deployer(deployer) {
-            return Err(SBTFactoryError::NotAuthorizedDeployer(NotAuthorizedDeployer {}));
-        }
-
-        // In a real implementation, this would use CREATE2 opcode to deploy the contract
-        // For this example, we simulate the deployment with a deterministic address
-        let contract_address = self.simulate_contract_deployment(deployer, salt);
-
-        // Update storage
-        let deployment_id = self.total_deployed.get();
-        self.deployed_by.setter(deployer).push(contract_address);
-        self.contract_deployers.insert(contract_address, deployer);
-        self.all_contracts.push(contract_address);
-        self.total_deployed.set(deployment_id + U256::from(1));
-
-        log(self.vm(), SBTContractDeployed {
-            deployer,
-            contract_address,
-            deployment_id,
-        });
-
-        Ok(contract_address)
-    }
-
-    /// Gets contracts deployed by a specific deployer
-    ///
-    /// # Arguments
-    /// * `deployer` - Address of the deployer
-    ///
-    /// # Returns
-    /// Vector of contract addresses deployed by the deployer
-    pub fn get_contracts_by_deployer(&self, deployer: Address) -> Vec<Address> {
-        let deployed_vec = self.deployed_by.getter(deployer);
+    fn get_issuer_collections(&self, issuer: Address) -> Vec<(String, String, Address)> {
+        let storage_vec = self.issuer_collections.get(issuer);
         let mut result = Vec::new();
-        for i in 0..deployed_vec.len() {
-            result.push(deployed_vec.get(i).unwrap_or(Address::ZERO));
+
+        // Return simple tuples instead of structs
+        for i in 0..storage_vec.len() {
+            if let Some(collection) = storage_vec.get(i) {
+                let tuple = (
+                    collection.name.get_string(),
+                    collection.symbol.get_string(),
+                    collection.sbt_address.get(),
+                );
+                result.push(tuple);
+            }
         }
+
         result
     }
 
-    /// Gets the deployer of a specific contract
-    ///
-    /// # Arguments
-    /// * `contract_address` - Address of the contract
-    ///
-    /// # Returns
-    /// Result containing the deployer address or ContractNotFound error
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If the contract was not deployed by this factory
-    pub fn get_contract_deployer(
-        &self,
-        contract_address: Address
-    ) -> Result<Address, SBTFactoryError> {
-        let deployer = self.contract_deployers.get(contract_address);
-        if deployer.is_zero() {
-            return Err(SBTFactoryError::ContractNotFound(ContractNotFound {}));
-        }
-        Ok(deployer)
+    fn is_valid_sbt_contract(&self, sbt_address: Address) -> bool {
+        self.is_valid_sbt.get(sbt_address)
     }
 
-    /// Gets a contract address by its deployment index
-    ///
-    /// # Arguments
-    /// * `index` - Index of the deployment
-    ///
-    /// # Returns
-    /// Result containing the contract address or InvalidIndex error
-    ///
-    /// # Errors
-    /// * `InvalidIndex` - If the index is out of bounds
-    pub fn get_contract_by_index(&self, index: U256) -> Result<Address, SBTFactoryError> {
-        let total = self.total_deployed.get();
-        if index >= total {
-            return Err(SBTFactoryError::InvalidIndex(InvalidIndex {}));
-        }
-
-        // Convert U256 to usize for array indexing (simplified)
-        let idx: usize = index.try_into().unwrap_or(0);
-        Ok(self.all_contracts.get(idx).unwrap_or(Address::ZERO))
+    fn get_total_collections(&self) -> U256 {
+        self.total_collections_count.get()
     }
 
-    /// Gets all deployed contract addresses
-    ///
-    /// # Returns
-    /// Vector of all deployed contract addresses
-    pub fn get_all_contracts(&self) -> Vec<Address> {
-        let mut result = Vec::new();
-        for i in 0..self.all_contracts.len() {
-            result.push(self.all_contracts.get(i).unwrap_or(Address::ZERO));
-        }
-        result
-    }
-
-    /// Simulates contract deployment for testing purposes
-    /// In production, this would use CREATE2 opcode
-    fn simulate_contract_deployment(&self, deployer: Address, salt: U256) -> Address {
-        // Create a deterministic address based on deployer and salt
-        // This is a simplified simulation - real deployment would use CREATE2
-        let combined = format!("{:?}{:?}", deployer, salt);
-        Address::from_slice(&combined.as_bytes()[0..20])
+    fn get_issuer_registry(&self) -> Address {
+        self.issuer_registry_address.get()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{address, Address, U256};
+    use stylus_sdk::{crypto::keccak, testing::*};
+
+    fn setup_factory() -> (TestVM, SBTFactory) {
+        let vm = TestVM::default();
+        let mut factory = SBTFactory::from(&vm);
+
+        let registry_addr = address!("1111111111111111111111111111111111111111");
+
+        let result = factory.constructor(registry_addr);
+        assert!(result.is_ok());
+
+        (vm, factory)
+    }
+
+    fn mock_is_issuer(vm: &mut TestVM, registry_addr: Address, issuer: Address, is_issuer: bool) {
+        // Compute selector for is_issuer(address) -> keccak256("is_issuer(address)")
+        let selector = keccak("is_issuer(address)".as_bytes())[0..4].to_vec();
+        let mut calldata: Vec<u8> = selector;
+        let mut padded_address = [0u8; 32];
+        padded_address[12..32].copy_from_slice(&issuer.into_array());
+        calldata.extend_from_slice(&padded_address);
+
+        // Return true (1) or false (0) as a 32-byte value
+        let ret_val = if is_issuer { U256::from(1) } else { U256::ZERO };
+        let ret_data = ret_val.to_be_bytes::<32>().to_vec();
+
+        vm.mock_call(registry_addr, calldata, Ok(ret_data));
+    }
+
+    fn mock_get_issuer(vm: &mut TestVM, sbt_addr: Address, returned_issuer: Address) {
+        // Compute selector for get_issuer() -> keccak256("get_issuer()")
+        let selector = keccak("get_issuer()".as_bytes())[0..4].to_vec();
+        let calldata: Vec<u8> = selector;
+
+        // Return address as 32-byte value (left-padded with zeros)
+        let mut padded_address = [0u8; 32];
+        padded_address[12..32].copy_from_slice(&returned_issuer.into_array());
+        let ret_data = padded_address.to_vec();
+
+        vm.mock_call(sbt_addr, calldata, Ok(ret_data));
+    }
 
     #[test]
-    fn test_sbt_factory_contract() {
-        use stylus_sdk::testing::*;
-        let vm = TestVM::default();
-        let mut contract = SBTFactory::from(&vm);
+    fn test_initialization() {
+        let (_vm, factory) = setup_factory();
 
-        let owner = Address::from_word("owner");
-        let deployer1 = Address::from_word("alice");
-        let deployer2 = Address::from_word("bob");
+        assert_eq!(
+            factory.get_issuer_registry(),
+            address!("1111111111111111111111111111111111111111")
+        );
+        assert_eq!(factory.get_total_collections(), U256::ZERO);
+    }
 
-        vm.set_sender(owner);
+    #[test]
+    fn test_empty_collections_list() {
+        let (_vm, factory) = setup_factory();
+        let issuer = address!("3333333333333333333333333333333333333333");
 
-        // Test constructor
-        let result = contract.constructor();
-        assert!(result.is_ok());
-        assert_eq!(contract.owner(), owner);
-        assert_eq!(contract.total_deployed(), U256::ZERO);
+        let collections = factory.get_issuer_collections(issuer);
+        assert!(collections.is_empty());
+    }
 
-        // Test authorize deployer
-        vm.set_sender(owner);
-        let result = contract.authorize_deployer(deployer1);
-        assert!(result.is_ok());
-        assert!(contract.is_authorized_deployer(deployer1));
+    #[test]
+    fn test_register_zero_sender() {
+        let (vm, mut factory) = setup_factory();
+        vm.set_sender(Address::ZERO);
+        let sbt_addr = address!("3333333333333333333333333333333333333333");
+        let name = "Test SBT".to_string();
+        let symbol = "TSBT".to_string();
 
-        // Test deploy contract
-        vm.set_sender(deployer1);
-        let salt = U256::from(123);
-        let result = contract.deploy_sbt_contract(salt);
-        assert!(result.is_ok());
-        let contract_address = result.unwrap();
+        let res = factory.register_sbt_collection(sbt_addr, name, symbol);
+        assert!(matches!(
+            res,
+            Err(SBTFactoryError::AddressZeroNotAllowed(_))
+        ));
+    }
 
-        assert_eq!(contract.total_deployed(), U256::from(1));
-        assert_eq!(contract.get_contract_deployer(contract_address).unwrap(), deployer1);
+    #[test]
+    fn test_register_zero_sbt_address() {
+        let (vm, mut factory) = setup_factory();
+        let issuer = address!("2222222222222222222222222222222222222222");
+        vm.set_sender(issuer);
+        let name = "Test SBT".to_string();
+        let symbol = "TSBT".to_string();
 
-        // Test get contracts by deployer
-        let contracts = contract.get_contracts_by_deployer(deployer1);
-        assert_eq!(contracts.len(), 1);
-        assert_eq!(contracts[0], contract_address);
+        let res = factory.register_sbt_collection(Address::ZERO, name, symbol);
+        assert!(matches!(
+            res,
+            Err(SBTFactoryError::AddressZeroNotAllowed(_))
+        ));
+    }
 
-        // Test get contract by index
-        let result = contract.get_contract_by_index(U256::ZERO);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), contract_address);
+    #[test]
+    fn test_register_empty_name() {
+        let (mut vm, mut factory) = setup_factory();
+        let issuer = address!("2222222222222222222222222222222222222222");
+        vm.set_sender(issuer);
+        let sbt_addr = address!("3333333333333333333333333333333333333333");
+        let symbol = "TSBT".to_string();
 
-        // Test error cases
-        let result = contract.get_contract_by_index(U256::from(999));
-        assert!(matches!(result, Err(SBTFactoryError::InvalidIndex(_))));
+        let registry_addr = factory.get_issuer_registry();
+        mock_is_issuer(&mut vm, registry_addr, issuer, true);
+        mock_get_issuer(&mut vm, sbt_addr, issuer);
 
-        // Test unauthorized deployer error
-        vm.set_sender(deployer2);
-        let result = contract.deploy_sbt_contract(U256::from(456));
-        assert!(matches!(result, Err(SBTFactoryError::NotAuthorizedDeployer(_))));
+        let res = factory.register_sbt_collection(sbt_addr, String::new(), symbol);
+        assert!(matches!(res, Err(SBTFactoryError::EmptyString(_))));
+    }
 
-        // Test contract not found error
-        let fake_address = Address::from_word("fake");
-        let result = contract.get_contract_deployer(fake_address);
-        assert!(matches!(result, Err(SBTFactoryError::ContractNotFound(_))));
+    #[test]
+    fn test_register_empty_symbol() {
+        let (mut vm, mut factory) = setup_factory();
+        let issuer = address!("2222222222222222222222222222222222222222");
+        vm.set_sender(issuer);
+        let sbt_addr = address!("3333333333333333333333333333333333333333");
+        let name = "Test SBT".to_string();
 
-        // Test deauthorize deployer
-        vm.set_sender(owner);
-        let result = contract.deauthorize_deployer(deployer1);
-        assert!(result.is_ok());
-        assert!(!contract.is_authorized_deployer(deployer1));
+        let registry_addr = factory.get_issuer_registry();
+        mock_is_issuer(&mut vm, registry_addr, issuer, true);
+        mock_get_issuer(&mut vm, sbt_addr, issuer);
+
+        let res = factory.register_sbt_collection(sbt_addr, name, String::new());
+        assert!(matches!(res, Err(SBTFactoryError::EmptyString(_))));
     }
 }

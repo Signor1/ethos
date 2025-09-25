@@ -27,13 +27,6 @@ ethos/
 │   ├── Cargo.toml
 │   ├── rust-toolchain.toml
 │   └── src/lib.rs
-├── reputation-staking/            # Individual Stylus project
-│   ├── Cargo.toml
-│   ├── rust-toolchain.toml
-│   └── src/lib.rs
-├── interfaces/                    # Shared library
-│   ├── Cargo.toml
-│   └── src/lib.rs
 ├── frontend/                      # Next.js application
 │   ├── package.json
 │   ├── src/
@@ -46,8 +39,7 @@ ethos/
 └── abis/                         # Generated contract ABIs (ignored)
     ├── issuer-registry.json
     ├── sbt.json
-    ├── sbt-factory.json
-    └── reputation-staking.json
+    └── sbt-factory.json
 ```
 
 ## 🎯 Vision & Core Features
@@ -60,8 +52,6 @@ Create a platform where DAOs, educational institutions, event organizers, and pr
 1. **🏛️ Issuer Registry**: Whitelist of legitimate organizations that can issue SBTs
 2. **🏭 SBT Factory**: Allows registered issuers to deploy new SBT collections
 3. **🏅 Soulbound Tokens**: Non-transferable ERC-721 tokens representing achievements
-4. **🎯 Reputation Staking**: Unique feature allowing users to stake reputation as social collateral
-5. **📊 Reputation Dashboard**: Visual interface showing user's complete reputation profile
 
 ## 🏛️ System Architecture
 
@@ -71,94 +61,62 @@ graph TB
         UI[Reputation Dashboard]
         WEB3[Web3 Integration]
     end
-    
+
     subgraph "Smart Contract Layer"
         IR[Issuer Registry]
         SF[SBT Factory]
         SBT[SBT Contracts]
         RS[Reputation Staking]
     end
-    
+
     subgraph "Arbitrum Stylus"
         WASM[WASM Runtime]
         ETH[Ethereum Compatibility]
     end
-    
+
     subgraph "Users & Issuers"
         USER[Users]
         DAO[DAOs]
         EDU[Educational Institutions]
         EVENT[Event Organizers]
     end
-    
+
     %% Frontend connections
     UI --> WEB3
     WEB3 --> IR
     WEB3 --> SF
     WEB3 --> SBT
     WEB3 --> RS
-    
+
     %% Smart contract interactions
     SF --> IR
     SF --> SBT
     RS --> SBT
-    
+
     %% Platform layer
     IR --> WASM
     SF --> WASM
     SBT --> WASM
     RS --> WASM
     WASM --> ETH
-    
+
     %% User interactions
     DAO --> IR
     EDU --> SF
     EVENT --> SF
     USER --> RS
     USER --> UI
-    
+
     %% Styling
     classDef frontend fill:#e1f5fe
     classDef contracts fill:#f3e5f5
     classDef platform fill:#e8f5e8
     classDef users fill:#fff3e0
-    
+
     class UI,WEB3 frontend
     class IR,SF,SBT,RS contracts
     class WASM,ETH platform
     class USER,DAO,EDU,EVENT users
-```
-
-## 💡 Reputation Staking Innovation
-
-The **Reputation Staking** system is Ethos's unique value proposition:
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant SBT as SBT Contract
-    participant RS as Reputation Staking
-    participant DAO as DAO/Resolver
-    
-    User->>SBT: Verify ownership of SBT
-    User->>RS: stake_reputation(sbt_address, token_id, task_id)
-    RS->>SBT: owner_of(token_id)
-    SBT-->>RS: User address
-    RS->>RS: Lock SBT for task
-    RS-->>User: Reputation staked ✓
-    
-    Note over User,DAO: Task execution period
-    
-    DAO->>RS: resolve_task(task_id, success)
-    RS->>RS: Update stake status
-    RS->>RS: Unlock SBT
-    RS-->>DAO: Task resolved ✓
-    
-    alt Success
-        Note over SBT: SBT gains positive attestation
-    else Failure
-        Note over SBT: SBT marked with failed task
-    end
 ```
 
 ## 🚀 Getting Started
@@ -175,7 +133,7 @@ sequenceDiagram
 
 1. **Clone and setup**
    ```bash
-   git clone https://github.com/your-org/ethos.git
+   git clone https://github.com/signor1/ethos.git
    cd ethos
    make setup
    ```
@@ -217,7 +175,6 @@ make check                    # Validates all contracts for Stylus deployment
 make check-sbt               # Check specific contract
 make check-issuer_registry   # Check issuer registry
 make check-sbt_factory       # Check factory contract
-make check-reputation_staking # Check staking contract
 
 # Build contracts to WASM
 make build                   # Build all contracts
@@ -256,7 +213,6 @@ make deploy-devnet          # Deploys all contracts to localhost:8547
 make deploy-devnet-issuer_registry     # Deploy issuer registry only
 make deploy-devnet-sbt                 # Deploy SBT contract only
 make deploy-devnet-sbt_factory         # Deploy factory only
-make deploy-devnet-reputation_staking  # Deploy staking contract only
 ```
 
 #### Testnet Deployment (Arbitrum Sepolia)
@@ -267,7 +223,6 @@ make deploy-testnet         # Requires testnet private key in .env.local
 
 # Deploy individual contracts to testnet
 make deploy-testnet-sbt                # Deploy SBT to testnet
-make deploy-testnet-reputation_staking # Deploy staking to testnet
 ```
 
 ### Frontend Development
@@ -351,7 +306,7 @@ Your `.env.local` file should contain:
 DEVNET_RPC_URL=http://localhost:8547
 DEVNET_PRIVATE_KEY=0xb6b15c8cb491557369f3c7d2c287b053eb229daa9c22138887752191c9520659
 
-# Arbitrum Sepolia Testnet  
+# Arbitrum Sepolia Testnet
 TESTNET_RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
 TESTNET_PRIVATE_KEY=your_testnet_private_key_here
 ```
@@ -382,14 +337,6 @@ make deploy-devnet-sbt_factory      # Deploy factory
 # Allows registered issuers to create SBT collections
 ```
 
-### Reputation Staking
-
-```bash
-make check-reputation_staking        # Check staking logic
-make deploy-devnet-reputation_staking # Deploy staking contract
-# Enables reputation-as-collateral functionality
-```
-
 ## 🛠️ Development Workflow
 
 ### Branch Strategy
@@ -402,7 +349,7 @@ make deploy-devnet-reputation_staking # Deploy staking contract
 ### Issue Labels
 
 - `🏗️ contracts`: Smart contract development
-- `🎨 frontend`: UI/UX development  
+- `🎨 frontend`: UI/UX development
 - `📚 docs`: Documentation
 - `🐛 bug`: Bug fixes
 - `✨ feature`: New features
@@ -412,18 +359,18 @@ make deploy-devnet-reputation_staking # Deploy staking contract
 
 1. **Create feature branch**
    ```bash
-   git checkout -b feature/reputation-dashboard
+   git checkout -b feature/sbt
    ```
 
 2. **Make changes and commit**
    ```bash
    git add .
-   git commit -m "feat: add reputation dashboard component"
+   git commit -m "feat: add SBT contract"
    ```
 
 3. **Push and create PR**
    ```bash
-   git push origin feature/reputation-dashboard
+   git push origin feature/sbt
    ```
 
 4. **PR Requirements**
@@ -460,8 +407,6 @@ npm run test:coverage # Coverage report
 
 - **Access Control**: Only registered issuers can create SBTs
 - **Non-transferability**: Transfer functions explicitly disabled
-- **Reputation Locking**: Prevents double-staking of SBTs
-- **Task Resolution**: Only authorized resolvers can update stakes
 
 ## 📊 Gas Optimization
 

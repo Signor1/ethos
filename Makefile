@@ -101,7 +101,7 @@ export-abi:
 	@mkdir -p abis
 	@for contract in $(CONTRACTS); do \
 		echo "$(YELLOW)Exporting ABI for $$contract...$(NC)"; \
-		cd $$contract && cargo stylus export-abi > ../abis/$$contract.json && cd ..; \
+		cd $$contract && cargo stylus export-abi --json > ../abis/$$contract.json && cd ..; \
 		if [ $$? -ne 0 ]; then \
 			echo "$(RED)Failed to export ABI for $$contract$(NC)"; \
 			exit 1; \

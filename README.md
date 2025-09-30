@@ -8,7 +8,7 @@
 
 ## 🏗️ Project Structure
 
-```
+```bash
 ethos/
 ├── README.md                       # This file
 ├── Makefile                        # Development automation
@@ -32,6 +32,7 @@ ethos/
 ## 🎯 Vision & Core Features
 
 ### Vision
+
 Create a platform where DAOs, educational institutions, event organizers, and protocols can issue verifiable, non-transferable tokens that collectively form a rich, multi-faceted on-chain reputation system.
 
 ### Core Features
@@ -50,72 +51,6 @@ Create a platform where DAOs, educational institutions, event organizers, and pr
 
 - [Ethos frontend](https://github.com/Psalmuel01/arb-token-minter)
 
-## 🏛️ System Architecture
-
-```mermaid
-graph TB
-    subgraph "Frontend Layer"
-        UI[Reputation Dashboard]
-        WEB3[Web3 Integration]
-    end
-
-    subgraph "Smart Contract Layer"
-        IR[Issuer Registry]
-        SF[SBT Factory]
-        SBT[SBT Contracts]
-        RS[Reputation Staking]
-    end
-
-    subgraph "Arbitrum Stylus"
-        WASM[WASM Runtime]
-        ETH[Ethereum Compatibility]
-    end
-
-    subgraph "Users & Issuers"
-        USER[Users]
-        DAO[DAOs]
-        EDU[Educational Institutions]
-        EVENT[Event Organizers]
-    end
-
-    %% Frontend connections
-    UI --> WEB3
-    WEB3 --> IR
-    WEB3 --> SF
-    WEB3 --> SBT
-    WEB3 --> RS
-
-    %% Smart contract interactions
-    SF --> IR
-    SF --> SBT
-    RS --> SBT
-
-    %% Platform layer
-    IR --> WASM
-    SF --> WASM
-    SBT --> WASM
-    RS --> WASM
-    WASM --> ETH
-
-    %% User interactions
-    DAO --> IR
-    EDU --> SF
-    EVENT --> SF
-    USER --> RS
-    USER --> UI
-
-    %% Styling
-    classDef frontend fill:#e1f5fe
-    classDef contracts fill:#f3e5f5
-    classDef platform fill:#e8f5e8
-    classDef users fill:#fff3e0
-
-    class UI,WEB3 frontend
-    class IR,SF,SBT,RS contracts
-    class WASM,ETH platform
-    class USER,DAO,EDU,EVENT users
-```
-
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -129,6 +64,7 @@ graph TB
 ### Quick Setup
 
 1. **Clone and setup**
+
    ```bash
    git clone https://github.com/signor1/ethos.git
    cd ethos
@@ -136,6 +72,7 @@ graph TB
    ```
 
 2. **Configure environment**
+
    ```bash
    # Edit .env.local with your RPC URLs and private keys
    cp .env.example .env.local
@@ -143,11 +80,12 @@ graph TB
    ```
 
 3. **Check everything works**
+
    ```bash
    make check
    ```
 
-## 🛠️ Development Workflow
+## 🛠️ Team Development Workflow
 
 ### Project Structure Commands
 
@@ -222,19 +160,6 @@ make deploy-testnet         # Requires testnet private key in .env.local
 make deploy-testnet-sbt                # Deploy SBT to testnet
 ```
 
-### Frontend Development
-
-```bash
-# Install frontend dependencies
-make frontend-install       # Installs Bun dependencies
-
-# Start development server
-make frontend-dev           # Starts Next.js dev server on http://localhost:3000
-
-# Build for production
-make frontend-build         # Creates optimized production build
-```
-
 ### Utility Commands
 
 ```bash
@@ -250,7 +175,7 @@ make all                    # clean + fmt + clippy + test + check + build + expo
 ### 1. Setting Up a New Environment
 
 ```bash
-git clone https://github.com/your-org/ethos.git
+git clone https://github.com/signor1/ethos.git
 cd ethos
 make setup                  # Install everything
 # Edit .env.local with your keys
@@ -281,8 +206,6 @@ docker run --rm -it -p 0.0.0.0:8547:8547 offchainlabs/nitro-node:v2.3.3 --init.d
 make deploy-devnet          # Deploy all contracts
 # Copy contract addresses from output
 
-# Test with frontend
-make frontend-dev           # Start frontend
 ```
 
 ### 5. Deploying to Testnet
@@ -355,17 +278,20 @@ make deploy-devnet-sbt_factory      # Deploy factory
 ### Pull Request Process
 
 1. **Create feature branch**
+
    ```bash
    git checkout -b feature/sbt
    ```
 
 2. **Make changes and commit**
+
    ```bash
    git add .
    git commit -m "feat: add SBT contract"
    ```
 
 3. **Push and create PR**
+
    ```bash
    git push origin feature/sbt
    ```
@@ -392,14 +318,6 @@ cargo install cargo-tarpaulin
 cargo tarpaulin --all
 ```
 
-### Frontend Testing
-```bash
-cd frontend
-npm run test          # Unit tests
-npm run test:e2e      # End-to-end tests
-npm run test:coverage # Coverage report
-```
-
 ## 🔐 Security Considerations
 
 - **Access Control**: Only registered issuers can create SBTs
@@ -413,10 +331,6 @@ Stylus provides significant gas savings over traditional Solidity:
 - **Efficient state management** with Rust's memory model
 - **Lower deployment costs** with WASM compilation
 
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for detailed guidelines.
-
 ### Quick Start for Contributors
 
 1. **Pick an issue** from our [Issues tab](https://github.com/signor1/ethos/issues)
@@ -425,17 +339,4 @@ We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for
 4. **Create** feature branch
 5. **Submit** pull request
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🔗 Links
-
-- **Documentation**: [docs/](docs/)
-- **Arbitrum Stylus**: [stylus.arbitrum.io](https://stylus.arbitrum.io)
-- **Issues**: [GitHub Issues](https://github.com/signor1/ethos/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/signor1/ethos/discussions)
-
----
-
-**Built with ❤️ using Arbitrum Stylus**
+#### Built with ❤️ using Arbitrum Stylus

@@ -53,6 +53,12 @@ Create a platform where DAOs, educational institutions, event organizers, and pr
 2. **🏭 SBT Factory**: Allows registered issuers to deploy new SBT collections
 3. **🏅 Soulbound Tokens**: Non-transferable ERC-721 tokens representing achievements
 
+## Deployed Contracts
+
+- SBT [0x503783260866cAe2547c49211cf9dD9c739bA677](https://sepolia.arbiscan.io/address/0x503783260866cae2547c49211cf9dd9c739ba677)
+- SBT FACTORY [0x7da6b1fc8197c8745c629d708d17583a3856de5e](https://sepolia.arbiscan.io/address/0x7da6b1fc8197c8745c629d708d17583a3856de5e)
+- ISSUER REGISTRY [0xa6b51a44d3f9f4eb3010fa0f643dbe7bf95b58c3](https://sepolia.arbiscan.io/address/0xa6b51a44d3f9f4eb3010fa0f643dbe7bf95b58c3)
+
 ## 🏛️ System Architecture
 
 ```mermaid

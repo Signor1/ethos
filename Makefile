@@ -271,26 +271,10 @@ ci: fmt clippy test check build
 	@echo "$(GREEN)CI pipeline complete!$(NC)"
 
 
-################# Frontend commands #################
-.PHONY: frontend-dev
-frontend-dev:
-	@echo "$(GREEN)Starting frontend development server...$(NC)"
-	@cd frontend && bun dev
-
-.PHONY: frontend-build
-frontend-build:
-	@echo "$(GREEN)Building frontend...$(NC)"
-	@cd frontend && bun run build
-
-.PHONY: frontend-install
-frontend-install:
-	@echo "$(GREEN)Installing frontend dependencies...$(NC)"
-	@cd frontend && bun install
-
 
 ########### Full project commands ###########
 .PHONY: install
-install: setup frontend-install
+install: setup
 	@echo "$(GREEN)Full project setup complete!$(NC)"
 
 .PHONY: all
